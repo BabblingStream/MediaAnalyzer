@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MediaAnalyzer — Media File Analyzer</title>
+<meta name="description" content="Offline media file analyzer: containers (MP4/FLV/TS/M3U8/Ogg/WebM/Matroska) and codec syntax (H.264/H.265/H.266/VP8/VP9/AV1/AAC/FLAC/MP3) parsed down to the bit, entirely in your browser.">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ============================ Top bar ============================ -->
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-logo" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <rect x="2" y="4.5" width="20" height="15" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M10 9l5.5 3-5.5 3z" fill="currentColor"/>
+    </svg>
+    <span class="brand-name">Media<b>Analyzer</b></span>
+    <span class="brand-slogan" data-i18n="app.slogan">Read every bit of media</span>
+  </div>
+
+  <div class="file-badge" id="fileBadge" hidden>
+    <span class="file-badge-format" id="badgeFormat"></span>
+    <span class="file-badge-name" id="badgeName"></span>
+    <span class="file-badge-size" id="badgeSize"></span>
+  </div>
+
+  <div class="topbar-actions">
+    <span class="local-tag" data-i18n="app.localOnly">100% local processing</span>
+    <select id="langSelect" class="lang-select" aria-label="Language"></select>
+    <button class="btn btn-primary" id="btnOpenFile" data-i18n="app.openFile">Open file</button>
+    <button class="btn" id="btnOpenUrl" data-i18n="app.openUrl">Open URL</button>
+    <input type="file" id="fileInput" hidden>
+  </div>
+</header>
+
+<div class="body">
+  <!-- ============================ Sidebar ============================ -->
+  <nav class="sidebar" id="sideNav" aria-label="Sections">
+    <div class="menu-title" data-i18n="nav.menu">Menu</div>
+    <button class="menu-item active" data-view="overview">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M4 4h7v7H4zm9 0h7v4h-7zM4 13h7v7H4zm9-4h7v11h-7z"/></svg>
+      <span data-i18n="nav.overview">Overview</span>
+    </button>
+    <button class="menu-item" data-view="structure">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M3 5h4v2H5v12h14V7h-2V5h4v16H3V5zm6 5h6v2H9zm0 4h6v2H9z"/></svg>
+      <span data-i18n="nav.structure">File structure</span>
+    </button>
+    <button class="menu-item" data-view="frames">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M4 5h16v14H4V5zm2 2v10h12V7H6zm2 2h3v2H8V9zm0 4h8v2H8v-2z"/></svg>
+      <span data-i18n="nav.frames">Frame analysis</span>
+    </button>
+    <button class="menu-item" data-view="hex">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm1 3l2 5-2 5h2l2-5-2-5H6zm6 8v2h6v-2h-6z"/></svg>
+      <span data-i18n="nav.hex">Hexadecimal</span>
+    </button>
+  </nav>
+
+  <!-- ============================== Main ============================== -->
+  <main class="main" id="main">
+
+    <!-- ---------------------- Welcome / drop ---------------------- -->
+    <section class="view welcome" id="view-welcome">
+      <div class="welcome-card">
+        <h1 data-i18n="welcome.title">Media File Analyzer</h1>
+        <p class="welcome-desc" data-i18n="welcome.desc"></p>
+        <div class="drop-zone" id="dropZone" tabindex="0" role="button">
+          <svg viewBox="0 0 24 24" width="52" height="52" aria-hidden="true">
+            <path fill="currentColor" d="M12 2a1 1 0 0 1 .71.29l4 4a1 1 0 0 1-1.42 1.42L13 5.41V15a1 1 0 1 1-2 0V5.41L8.71 7.71A1 1 0 0 1 7.29 6.29l4-4A1 1 0 0 1 12 2zM4 17h16v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3z"/>
+          </svg>
+          <p class="dz-main" data-i18n="welcome.drop">Drop a media file here</p>
+          <p class="dz-sub" data-i18n="welcome.or">or</p>
+          <button class="btn btn-primary" id="btnBrowse" data-i18n="welcome.browse">Choose file</button>
+        </div>
+        <div class="welcome-online">
+          <button class="btn" id="btnBrowseOnline" data-i18n="welcome.online">Online file…</button>
+        </div>
+        <p class="welcome-hint" data-i18n="welcome.hint"></p>
+      </div>
+    </section>
+
+    <!-- --------------------------- Overview --------------------------- -->
+    <section class="view" id="view-overview" hidden>
+      <div class="pane-header"><span data-i18n="nav.overview">Overview</span></div>
+      <div class="ov-preview-host" id="overviewPreview" hidden></div>
+      <div class="pane-body" id="overviewBody"></div>
+    </section>
+
+    <!-- --------------------------- Structure -------------------------- -->
+    <section class="view" id="view-structure" hidden>
+      <div class="split">
+        <div class="pane pane-tree">
+          <div class="pane-header">
+            <span data-i18n="st.structure">Structure</span>
+            <input type="search" class="input-search" id="structureSearch" data-i18n-ph="st.search" placeholder="Filter boxes…">
+          </div>
+          <div class="pane-body tree-root" id="treeRoot"></div>
+        </div>
+        <div class="pane pane-detail">
+          <div class="pane-header"><span id="nodeDetailTitle" data-i18n="st.details">Details</span></div>
+          <div class="pane-body" id="nodeDetail"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------------------- Frames ---------------------------- -->
+    <section class="view" id="view-frames" hidden>
+      <div class="split">
+        <div class="pane pane-frames">
+          <div class="pane-header">
+            <span class="pane-label" data-i18n="fr.filter">Filter</span>
+            <div class="chips" id="frameFilters"></div>
+            <span class="spacer"></span>
+            <select class="input-select small" id="framePerPage" aria-label="Rows per page"></select>
+          </div>
+          <div class="pane-body" id="frameList"></div>
+          <div class="pager" id="framePager"></div>
+        </div>
+        <div class="pane pane-frame-detail">
+          <div class="pane-header"><span id="frameDetailTitle" data-i18n="fr.selectFrame">Select a frame…</span></div>
+          <nav class="tabs" id="frameTabs">
+            <button class="tab active" data-ftab="syntax" data-i18n="fr.tabSyntax">Codec syntax</button>
+            <button class="tab" data-ftab="hex" data-i18n="fr.tabHex">Hex data</button>
+            <button class="tab" data-ftab="preview" data-i18n="fr.tabPreview">Preview</button>
+          </nav>
+          <div class="pane-body">
+            <div class="tab-pane active" data-fpane="syntax" id="frameSyntaxPane"></div>
+            <div class="tab-pane" data-fpane="hex" id="frameHexPane"></div>
+            <div class="tab-pane" data-fpane="preview" id="framePreviewPane"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ----------------------------- Hex ------------------------------ -->
+    <section class="view" id="view-hex" hidden>
+      <div class="pane-header hex-toolbar">
+        <span class="pane-label" data-i18n="nav.hex">Hexadecimal</span>
+        <select class="input-select small" id="hexPageSize" aria-label="Page size"></select>
+        <input type="text" class="input-addr" id="hexAddr" value="0x00000000" spellcheck="false" aria-label="Address">
+        <button class="btn btn-sm" id="btnHexGo" data-i18n="hex.go">Go</button>
+        <div class="hex-pos-info" id="hexPosInfo"></div>
+      </div>
+      <div class="hex-body">
+        <div class="hex-main">
+          <div class="hex-grid" id="hexGrid"></div>
+          <div class="pager" id="hexPager"></div>
+        </div>
+        <aside class="hex-struct-panel">
+          <div class="hex-struct-title" data-i18n="hex.structures">Structures on this page</div>
+          <div class="hex-struct-list" id="hexStructList"></div>
+        </aside>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ========================= Full-page drop ========================= -->
+<div class="drop-overlay" id="dropOverlay" hidden>
+  <div class="drop-overlay-inner">
+    <svg viewBox="0 0 24 24" width="72" height="72" aria-hidden="true">
+      <path fill="currentColor" d="M12 2a1 1 0 0 1 .71.29l4 4a1 1 0 0 1-1.42 1.42L13 5.41V15a1 1 0 1 1-2 0V5.41L8.71 7.71A1 1 0 0 1 7.29 6.29l4-4A1 1 0 0 1 12 2zM4 17h16v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3z"/>
+    </svg>
+    <div data-i18n="app.dropOverlay">Drop the media file to analyze</div>
+  </div>
+</div>
+
+<!-- ============================ URL modal ============================ -->
+<div class="modal-mask" id="urlModal" hidden>
+  <div class="modal">
+    <h3 data-i18n="url.title">Open an online media file</h3>
+    <input type="url" id="urlInput" class="input-url" data-i18n-ph="url.placeholder" placeholder="https://example.com/video.mp4" spellcheck="false">
+    <p class="modal-tip" data-i18n="url.hint"></p>
+    <div class="modal-actions">
+      <button class="btn" id="btnUrlCancel" data-i18n="url.cancel">Cancel</button>
+      <button class="btn btn-primary" id="btnUrlOk" data-i18n="url.analyze">Analyze</button>
+    </div>
+  </div>
+</div>
+
+<div class="loading" id="loadingMask" hidden><div class="spinner"></div><span id="loadingText"></span></div>
+<div class="toast" id="toast" hidden></div>
+
+<!-- =====================================================================
+     Scripts — plain <script> tags, in dependency order, so the page works
+     when opened straight from the file system with no build step.
+     ===================================================================== -->
+<script src="js/util.js"></script>
+<script src="js/i18n.js"></script>
+<script src="js/detector.js"></script>
+<script src="js/framesyntax.js"></script>
+<script src="js/codecs/hdr-sei.js"></script>
+
+<script src="js/codecs/h264.js"></script>
+<script src="js/codecs/h265.js"></script>
+<script src="js/codecs/h266.js"></script>
+<script src="js/codecs/mpeg2.js"></script>
+<script src="js/codecs/mpeg4p2.js"></script>
+<script src="js/codecs/h263.js"></script>
+<script src="js/codecs/vp8.js"></script>
+<script src="js/codecs/vp9.js"></script>
+<script src="js/codecs/av1.js"></script>
+<script src="js/codecs/av2.js"></script>
+<script src="js/codecs/aac.js"></script>
+<script src="js/codecs/flac.js"></script>
+<script src="js/codecs/mp3.js"></script>
+<script src="js/codecs/ac3.js"></script>
+
+<script src="js/parsers/mp4.js"></script>
+<script src="js/parsers/matroska.js"></script>
+<script src="js/parsers/flv.js"></script>
+<script src="js/parsers/asf.js"></script>
+<script src="js/parsers/ts.js"></script>
+<script src="js/parsers/ogg.js"></script>
+<script src="js/parsers/audio.js"></script>
+<script src="js/parsers/images.js"></script>
+<script src="js/parsers/riff.js"></script>
+<script src="js/parsers/m3u8.js"></script>
+<script src="js/parsers/elementary.js"></script>
+
+<script src="js/ui/shell.js"></script>
+<script src="js/ui/overview.js"></script>
+<script src="js/ui/structure.js"></script>
+<script src="js/ui/frames.js"></script>
+<script src="js/ui/hex.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
