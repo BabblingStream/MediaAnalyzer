@@ -146,6 +146,18 @@ body {
 .btn-primary { background: var(--accent); border-color: var(--accent); color: #05121f; font-weight: 600; }
 .btn-primary:hover { background: #55b0ff; border-color: #55b0ff; }
 .btn-sm { padding: 3px 9px; font-size: 11px; }
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  text-decoration: none;
+  color: var(--text-dim);
+}
+.btn-icon:hover { color: var(--text); }
+.btn-icon svg { display: block; }
 
 /* ============================== Layout =================================== */
 
