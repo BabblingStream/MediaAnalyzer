@@ -192,6 +192,17 @@
     22: 'unsigned int', 23: 'float32', 24: 'float64', 27: 'BMP'
   };
 
+  /** meta handler_type → the metadata system it selects. */
+  var META_HANDLERS = {
+    mdir: 'iTunes-style metadata (ilst)',
+    mdta: 'keyed metadata (keys + ilst)',
+    pict: 'image collection (HEIF/AVIF)',
+    odsm: 'MPEG-4 object descriptors',
+    sdsm: 'MPEG-4 scene description',
+    'id3 ': 'ID3 tag payload',
+    m7rm: 'legacy QuickTime metadata'
+  };
+
   /* ================================================================ helpers */
 
   function addMeta(P, key, value) {
@@ -630,7 +641,38 @@
       if (type === 'moof') { P.moofOffset = boxStart; P.fragmentTrak = null; }
       if (type === 'traf') { P.currentTfhd = null; P.fragmentTrak = null; }
       // Remember which metadata key the following `data` box belongs to.
-      if (parentType === 'ilst') P.lastIlstKey = type;
+      // iTunes items are named by their fourcc (©nam…), while keyed metadata
+      // (mdta) items carry a 1-based index into the `keys` table, so the name
+      // has to be resolved there.
+      if (parentType === 'ilst') {
+        var raw = br.u8;
+        // Rebuild the type from the raw bytes: fourcc() replaces non-printable
+        // bytes with '.', which would make ©nam and the mdta index items
+        // (00 00 00 01 …) indistinguishable.
+        var rawType = String.fromCharCode(raw[boxStart + 4], raw[boxStart + 5],
+                                          raw[boxStart + 6], raw[boxStart + 7]);
+        var itemKey = rawType;
+        var keyLabel = '';
+        if (META_KEYS[rawType]) {
+          keyLabel = META_KEYS[rawType];
+        } else if (/^[\x20-\x7e]{4}$/.test(rawType)) {
+          itemKey = rawType;
+        } else {
+          // mdta items are 1-based indices into the keys table.
+          var keyIdx = (((raw[boxStart + 4] << 24) >>> 0) +
+                        (raw[boxStart + 5] << 16) + (raw[boxStart + 6] << 8) +
+                        raw[boxStart + 7]) | 0;
+          if (P.metaKeys && P.metaKeys[keyIdx - 1]) {
+            itemKey = P.metaKeys[keyIdx - 1];
+            keyLabel = itemKey;
+          }
+        }
+        P.lastIlstKey = itemKey;
+        if (keyLabel) {
+          node.name = keyLabel;
+          if (keyLabel !== rawType) MA.nodeField(node, 'key', keyLabel, boxStart + 4, 4);
+        }
+      }
 
       // A "trak" starts a new track context; everything inside it is routed there.
       if (type === 'trak') {
@@ -652,6 +694,8 @@
           var fb = readFull(br, payloadStart, node);
           childStart = payloadStart + 4;
           if (type === 'iref') P.irefVersion = fb.version;
+        } else {
+          MA.nodeNote(node, 'QuickTime variant: no version/flags header');
         }
       }
 
@@ -661,6 +705,7 @@
         } else if (isContainer) {
           node.children = walkBoxes(br, childStart, boxEnd, depth + 1, P, [], type);
           if (type === 'trak') annotateTrakContainer(node, P.trak);
+          else if (type === 'meta') annotateMeta(node);
           if (!node.children.length && boxEnd > childStart) {
             payloadFields(node, br, childStart, boxEnd);
           }
@@ -987,39 +1032,57 @@
       // It holds a typed value, never child boxes — descending here used to
       // produce a chain of bogus "boxes" read out of the value bytes.
       case 'data': {
-        var valueType = (br.u32at(ps) >>> 24) & 0xff;
-        MA.nodeField(node, 'type', valueType + ' (' + (DATA_TYPES[valueType] || 'unknown') + ')', ps, 4);
+        // version(8) + flags(24) holds the value type in the FLAGS field, so
+        // the type is the low 24 bits — reading the top byte only ever yields
+        // the (always 0) version and turned every item into "binary".
+        var dataWord = br.u32at(ps);
+        var valueType = dataWord & 0xffffff;
+        MA.nodeField(node, 'version', (dataWord >>> 24) & 0xff, ps, 1);
+        MA.nodeField(node, 'type', valueType + ' (' + (DATA_TYPES[valueType] || 'unknown') + ')',
+                     ps + 1, 3);
         MA.nodeField(node, 'locale', br.u32at(ps + 4), ps + 4, 4);
         var vStart = ps + 8;
         var vLen = Math.max(0, pe - vStart);
         var key = P.lastIlstKey ? (META_KEYS[P.lastIlstKey] || P.lastIlstKey) : 'metadata';
-        if (valueType === 1 && vLen > 0) {              // UTF-8 text
+        if ((P.lastIlstKey === 'trkn' || P.lastIlstKey === 'disk') && vLen >= 6) {
+          var num = (data[vStart + 2] << 8) | data[vStart + 3];
+          var of = (data[vStart + 4] << 8) | data[vStart + 5];
+          var pair = num + (of ? ' of ' + of : '');
+          MA.nodeField(node, 'value', pair, vStart, vLen);
+          addMeta(P, key, pair);
+        } else if (valueType === 1 && vLen > 0) {              // UTF-8 text
           var text = readUtf8(data, vStart, pe);
           MA.nodeField(node, 'value', text, vStart, vLen);
           addMeta(P, key, text);
+        } else if (valueType === 2 && vLen > 1) {              // UTF-16 (big-endian)
+          var u16 = '';
+          for (var q = vStart; q + 1 < pe; q += 2) {
+            var c = (data[q] << 8) | data[q + 1];
+            if (!c) break;
+            u16 += String.fromCharCode(c);
+          }
+          MA.nodeField(node, 'value', u16, vStart, vLen);
+          addMeta(P, key, u16);
         } else if ((valueType === 21 || valueType === 22) && vLen >= 4) {   // signed/unsigned int
           MA.nodeField(node, 'value', String(br.u32at(vStart)), vStart, vLen);
           addMeta(P, key, String(br.u32at(vStart)));
-        } else if (valueType === 13 || valueType === 14 || valueType === 12) {  // JPEG/PNG/BMP cover art
-          MA.nodeField(node, 'value', MA.formatSize(vLen) + ' cover art', vStart, vLen);
+        } else if ((valueType === 23 || valueType === 24) && vLen >= 4) {   // float32/float64
+          var dv = new DataView(data.buffer, data.byteOffset + vStart, vLen);
+          var fnum = valueType === 23 ? dv.getFloat32(0) : dv.getFloat64(0);
+          MA.nodeField(node, 'value', String(fnum), vStart, vLen);
+          addMeta(P, key, String(fnum));
+        } else if (valueType === 13 || valueType === 14 || valueType === 12 ||
+                   valueType === 27) {                     // JPEG/PNG/BMP/GIF cover art
+          MA.nodeField(node, 'value', MA.formatSize(vLen) + ' ' +
+                       (DATA_TYPES[valueType] || '') + ' image', vStart, vLen);
           addMeta(P, key, MA.formatSize(vLen) + ' image');
-        } else if ((P.lastIlstKey === 'trkn' || P.lastIlstKey === 'disk') && vLen >= 6) {
-          var num = (data[vStart + 2] << 8) | data[vStart + 3];
-          var of = (data[vStart + 4] << 8) | data[vStart + 5];
-          var s = num + (of ? ' of ' + of : '');
-          MA.nodeField(node, 'value', s, vStart, vLen);
-          addMeta(P, key, s);
         } else {
           MA.nodeField(node, 'value', '<binary ' + vLen + ' bytes>', vStart, vLen);
+          payloadFields(node, br, vStart, pe);          // ASCII + hex, both jumpable
         }
         return true;
       }
-      case 'keys': {
-        readFull(br, ps, node);
-        var keyCount = entryCount(br.u32at(ps + 4), ps, pe, 8, node, 'entry_count');
-        MA.nodeField(node, 'entry_count', keyCount, ps + 4, 4);
-        return true;
-      }
+      case 'keys': parseKeys(br, node, ps, pe, P); return true;
       default: return false;
     }
   }
@@ -1133,7 +1196,9 @@
     readFull(br, ps, node);
     MA.nodeField(node, 'pre_defined', br.u32at(ps + 4), ps + 4, 4);
     var handler = br.fourcc(ps + 8);
-    MA.nodeField(node, 'handler_type', "'" + handler + "'", ps + 8, 4);
+    var handlerDesc = META_HANDLERS[handler];
+    MA.nodeField(node, 'handler_type', "'" + handler + "'" + (handlerDesc ? ' — ' + handlerDesc : ''),
+                 ps + 8, 4);
     MA.nodeField(node, 'reserved', '0x' + MA.pad(br.u32at(ps + 12).toString(16), 8, '0'), ps + 12, 12);
     var nameBytes = pe - (ps + 24);
     var nm = nameBytes > 0 ? readCString(br.u8, ps + 24, pe) : '';
@@ -1183,6 +1248,60 @@
     P.trak = null;                       // url/urn entries belong to no track
     node.children = walkBoxes(br, ps + 8, pe, 0, P, [], 'dref');
     P.trak = prevTrak;
+  }
+
+  /**
+   * keys — the mdta key table. Each entry is size(4) + namespace(4, 'mdta') +
+   * a NUL-terminated UTF-8 key, and ilst items refer to entries by 1-based
+   * index instead of by name.
+   */
+  function parseKeys(br, node, ps, pe, P) {
+    readFull(br, ps, node);
+    var count = entryCount(br.u32at(ps + 4), ps, pe, 8, node, 'entry_count');
+    MA.nodeField(node, 'entry_count', count, ps + 4, 4);
+    var p = ps + 8;
+    P.metaKeys = [];
+    for (var i = 0; i < count && p + 8 <= pe; i++) {
+      var size = br.u32at(p);
+      if (size < 8 || p + size > pe) break;
+      var ns = br.fourcc(p + 4);
+      var key = readUtf8(br.u8, p + 8, p + size);
+      P.metaKeys.push(key);
+      if (i < MAX_FIELD_ROWS) {
+        MA.nodeField(node, 'key[' + i + ']',
+                     key + (ns && ns !== 'mdta' ? "  ('" + ns + "' namespace)" : ''),
+                     p, size);
+      }
+      p += size;
+    }
+    if (count > MAX_FIELD_ROWS) MA.nodeNote(node, '… ' + (count - MAX_FIELD_ROWS) + ' more keys');
+    node.name = 'Metadata Item Keys Box (' + count + ' keys)';
+  }
+
+  /** Summarise what a `meta` box turned out to be, after its children walked. */
+  function annotateMeta(node) {
+    var handler = null, items = -1, keyed = false;
+    for (var i = 0; i < node.children.length; i++) {
+      var c = node.children[i];
+      if (c.code === 'hdlr') {
+        for (var f = 0; f < c.fields.length; f++) {
+          if (c.fields[f].name === 'handler_type') {
+            handler = String(c.fields[f].value).replace(/'/g, '').split(' ')[0];
+          }
+        }
+      } else if (c.code === 'ilst') {
+        items = c.children.length;
+      } else if (c.code === 'keys') {
+        keyed = true;
+      }
+    }
+    var bits = [];
+    var desc = handler ? META_HANDLERS[handler] : '';
+    if (desc) bits.push(desc);
+    else if (handler) bits.push("'" + handler + "' metadata");
+    if (items > 0) bits.push(items + (items === 1 ? ' item' : ' items'));
+    if (keyed) bits.push('keyed');
+    if (bits.length) MA.nodeNote(node, bits.join(' · '));
   }
 
   /** iinf — entry_count (16 or 32 bit) followed by infe boxes. */
