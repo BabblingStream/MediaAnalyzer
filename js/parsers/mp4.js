@@ -124,19 +124,38 @@
   /** ftyp brands that identify a HEIF/HEIC still image. */
   var HEIF_BRANDS = { heic: 1, heix: 1, hevc: 1, hevx: 1, mif1: 1, msf1: 1, avif: 1, avis: 1 };
 
-  /** colr 'nclx' index → display names (MediaInfo-style). */
+  /** colr 'nclx' index → display names (ITU-T H.273 / ISO 23091-2). */
   var COLOUR_PRIMARIES = {
-    1: 'BT.709', 4: 'BT.470 System M', 5: 'BT.601 PAL', 6: 'BT.601 NTSC',
-    7: 'SMPTE 240M', 9: 'BT.2020', 11: 'DCI-P3', 12: 'Display P3'
+    0: 'reserved', 1: 'BT.709', 2: 'Unspecified', 3: 'reserved',
+    4: 'BT.470 System M', 5: 'BT.470 System B/G', 6: 'SMPTE 170M (BT.601 525)',
+    7: 'SMPTE 240M', 8: 'Generic film', 9: 'BT.2020', 10: 'XYZ (SMPTE ST 428-1)',
+    11: 'SMPTE RP 431-2 (DCI-P3)', 12: 'SMPTE EG 432-1 (Display P3)',
+    22: 'EBU Tech. 3213-E'
   };
   var COLOUR_TRANSFER = {
-    1: 'BT.709', 4: 'Gamma 2.2', 5: 'Gamma 2.8', 6: 'BT.601', 7: 'SMPTE 240M',
-    8: 'Linear', 13: 'sRGB', 16: 'PQ (HDR)', 18: 'HLG (HDR)'
+    0: 'reserved', 1: 'BT.709', 2: 'Unspecified', 3: 'reserved',
+    4: 'BT.470 System M (gamma 2.2)', 5: 'BT.470 System B/G (gamma 2.8)',
+    6: 'SMPTE 170M (BT.601)', 7: 'SMPTE 240M', 8: 'Linear',
+    9: 'Logarithmic (100:1)', 10: 'Logarithmic (316.227:1)',
+    11: 'IEC 61966-2-4', 12: 'BT.1361 extended colour gamut',
+    13: 'IEC 61966-2-1 (sRGB)', 14: 'BT.2020 (10-bit)',
+    15: 'BT.2020 (12-bit)', 16: 'SMPTE ST 2084 (PQ, HDR)',
+    17: 'SMPTE ST 428-1', 18: 'ARIB STD-B67 (HLG, HDR)'
   };
   var COLOUR_MATRIX = {
-    0: 'Identity (RGB)', 1: 'BT.709', 5: 'BT.601 PAL', 6: 'BT.601 NTSC',
-    9: 'BT.2020', 11: 'DCI-P3', 12: 'Display P3'
+    0: 'Identity (RGB/GBR)', 1: 'BT.709', 2: 'Unspecified', 3: 'reserved',
+    4: 'FCC (US 73)', 5: 'BT.470 System B/G', 6: 'SMPTE 170M (BT.601)',
+    7: 'SMPTE 240M', 8: 'YCgCo', 9: 'BT.2020 non-constant luminance',
+    10: 'BT.2020 constant luminance', 11: 'SMPTE ST 2085 (Y\'D\'zD\'x)',
+    12: 'Chromaticity-derived non-constant', 13: 'Chromaticity-derived constant',
+    14: 'ICtCp'
   };
+
+  /** "value — meaning" for a coded enum, falling back to the bare value. */
+  function enumText(map, value) {
+    var name = map[value];
+    return value + (name ? ' — ' + name : '');
+  }
 
   var CODEC_NAME = {
     avc1: 'H.264 / AVC', avc2: 'H.264 / AVC', avc3: 'H.264 / AVC (in-band SPS/PPS)',
@@ -900,13 +919,16 @@
         MA.nodeField(node, 'colour_type', "'" + ctype + "'", ps, 4);
         if (ctype === 'nclx' || ctype === 'nclc') {
           var cp = br.u16at(ps + 4), ct = br.u16at(ps + 6), cm = br.u16at(ps + 8);
-          MA.nodeField(node, 'colour_primaries', cp, ps + 4, 2);
-          MA.nodeField(node, 'transfer_characteristics', ct, ps + 6, 2);
-          MA.nodeField(node, 'matrix_coefficients', cm, ps + 8, 2);
+          MA.nodeField(node, 'colour_primaries', enumText(COLOUR_PRIMARIES, cp), ps + 4, 2);
+          MA.nodeField(node, 'transfer_characteristics', enumText(COLOUR_TRANSFER, ct), ps + 6, 2);
+          MA.nodeField(node, 'matrix_coefficients', enumText(COLOUR_MATRIX, cm), ps + 8, 2);
           var fullRange = null;
           if (ctype === 'nclx') {
             fullRange = (br.u8at(ps + 10) >> 7) & 1;
-            MA.nodeField(node, 'full_range_flag', fullRange, ps + 10, 1);
+            MA.nodeField(node, 'full_range_flag', fullRange +
+                         (fullRange ? ' — full range (0–255 / 0–255)'
+                                    : ' — limited range (16–235 / 16–240)'),
+                         ps + 10, 1);
           }
           if (tk) tk.config.colour = { primaries: cp, transfer: ct, matrix: cm, fullRange: fullRange };
         } else if (ctype === 'prof' || ctype === 'rICC') {
